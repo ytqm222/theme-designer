@@ -56,8 +56,7 @@ const EntryType: Record<ThemePropertyType, FormItemType | null> = {
 const entries = computed(() => {
     const result = [];
     for (const [name, value] of Object.entries(props.modelValue)) {
-        // @ts-expect-error Object.entries returns unknown ¯\_(ツ)_/¯
-        const type: FormItemType | null = EntryType[ThemePropertiesTypes[name]];
+        const type: FormItemType | null = EntryType[ThemePropertiesTypes[name as keyof typeof ThemePropertiesTypes]];
         if (type === null) continue;
         result.push({ name, type, value });
     }
@@ -71,30 +70,22 @@ const onPropUpdate = (k: string, v: boolean | string) => {
     };
 };
 
-const colorPicker = ref<typeof ColorPicker.methods>();
-
-interface ColorPickerResult {
-    rgba: { r: number, g: number, b: number, a: number };
-    hsv: { h: number, s: number, v: number };
-    /** `0xRRGGBB` without alpha */
-    hex: string;
-}
-
 const picker = reactive({
-    name: '',
     open: false,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    onChange: (color: string) => { }
+    name: '',
+    onChange: (_color: string) => { },
 });
+const colorPicker = ref<InstanceType<typeof ColorPicker>>();
 
-const onColorPickerChange = (color: ColorPickerResult) => {
-    if (!picker.open) return;
-    const { r, g, b, a } = color.rgba;
-    const hex = [r, g, b, Math.round(a * 0xff)].map(i => i.toString(16).padStart(2, '0')).join('');
-    picker.onChange(`#${hex}`);
+const onColorPickerChange = (color: { r: number, g: number, b: number, a: number }) => {
+    const r = color.r.toString(16).padStart(2, '0');
+    const g = color.g.toString(16).padStart(2, '0');
+    const b = color.b.toString(16).padStart(2, '0');
+    const a = Math.round(color.a * 255).toString(16).padStart(2, '0');
+    picker.onChange(`#${r}${g}${b}${a}`);
 };
 
-function hexa2rgba(hexa: string) {
+function hexa2rgba(hexa: string): string {
     const r = Number.parseInt(hexa.substring(1, 3), 0x10);
     const g = Number.parseInt(hexa.substring(3, 5), 0x10);
     const b = Number.parseInt(hexa.substring(5, 7), 0x10);
@@ -115,6 +106,55 @@ const closeColorPicker = () => {
     picker.open = false;
     picker.onChange = () => { };
 };
+
+// --- 上传和截取底图功能逻辑 ---
+const bgFileInput = ref<HTMLInputElement>();
+const bgPreviewUrl = ref('');
+const brightness = ref(50);
+
+const triggerBgUpload = () => bgFileInput.value?.click();
+
+const onBgFileChange = (e: Event) => {
+    const file = (e.target as HTMLInputElement)?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        const base64 = reader.result as string;
+        bgPreviewUrl.value = base64;
+        updateThemeBackgroundImage(base64);
+    };
+    reader.readAsDataURL(file);
+};
+
+const updateThemeBackgroundImage = (base64Data: string) => {
+    model.value = {
+        ...props.modelValue,
+        backgroundImage: {
+            croppedFilePath: base64Data,
+            srcFilePath: base64Data,
+            brightness: brightness.value,
+            cropRect: {
+                top: 0,
+                right: 360,
+                bottom: 270,
+                left: 0
+            }
+        }
+    };
+};
+
+const onBrightnessChange = () => {
+    if (props.modelValue.backgroundImage) {
+        const currentBg = props.modelValue.backgroundImage as any;
+        model.value = {
+            ...props.modelValue,
+            backgroundImage: {
+                ...currentBg,
+                brightness: brightness.value
+            }
+        };
+    }
+};
 </script>
 
 <template>
@@ -132,8 +172,24 @@ const closeColorPicker = () => {
                     </td>
                 </tr>
                 <tr>
+                    <th colspan="2" style="padding-top:15px; color:#1a73e8;">
+                        Background Image (底图配置)
+                    </th>
+                </tr>
+                <tr>
+                    <th>Skin Background</th>
+                    <td>
+                        <input type="button" value="Upload Background Image" @click="triggerBgUpload">
+                        <input ref="bgFileInput" type="file" accept="image/*" style="display:none" @change="onBgFileChange">
+                        <div v-if="modelValue.backgroundImage" style="margin-top: 8px;">
+                            <label style="font-size: 12px; display:block; margin-bottom:4px;">Brightness (亮度: {{ brightness }}%)</label>
+                            <input type="range" min="0" max="100" v-model.number="brightness" @input="onBrightnessChange">
+                        </div>
+                    </td>
+                </tr>
+                <tr>
                     <th colspan="2">
-                        Theme
+                        Theme Colors
                     </th>
                 </tr>
                 <template v-for="item of entries" :key="item.name">
