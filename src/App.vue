@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onBeforeUnmount, ref, shallowRef } from 'vue';
 
 import { v4 as uuidv4 } from 'uuid';
 import UZIP from 'uzip';
 
 import { PunctuationPosition, ThemePreference } from './types/ThemePreference';
 import { normalizeThemeProperties, serializeThemeProperties, ThemeProperties } from './types/ThemeProperties';
+import type { BackgroundImageAssets } from './types/BackgroundImageAssets';
 import { PixelDark } from './theme-preset';
 
 import { TextKeyboard } from './layouts';
@@ -29,6 +30,7 @@ const preference = ref<ThemePreference>({
 });
 
 const theme = ref<ThemeProperties>({ ...PixelDark, name: uuidv4() });
+const backgroundAssets = shallowRef<BackgroundImageAssets | null>(null);
 
 const file = ref<HTMLInputElement>();
 
@@ -40,17 +42,55 @@ const importTheme = () => file.value?.click();
 
 const textDecoder = new TextDecoder();
 
+const setBackgroundAssets = (assets: BackgroundImageAssets | null) => {
+    if (backgroundAssets.value) {
+        URL.revokeObjectURL(backgroundAssets.value.croppedPreviewUrl);
+        URL.revokeObjectURL(backgroundAssets.value.sourcePreviewUrl);
+    }
+    backgroundAssets.value = assets;
+};
+
+onBeforeUnmount(() => setBackgroundAssets(null));
+
+const imageMimeType = (path: string) => {
+    switch (path.split('.').pop()?.toLowerCase()) {
+        case 'png': return 'image/png';
+        case 'webp': return 'image/webp';
+        case 'gif': return 'image/gif';
+        case 'jpg':
+        case 'jpeg':
+        default: return 'image/jpeg';
+    }
+};
+
+const fileExtension = (blob: Blob, fileName: string) => {
+    switch (blob.type.toLowerCase()) {
+        case 'image/png': return 'png';
+        case 'image/jpeg': return 'jpg';
+        case 'image/webp': return 'webp';
+        case 'image/gif': return 'gif';
+        default: {
+            const extension = fileName.match(/\.([a-zA-Z0-9]+)$/)?.[1];
+            if (!extension) throw new Error(`Unsupported image format: ${blob.type || fileName}`);
+            return extension.toLowerCase();
+        }
+    }
+};
+
+const basename = (path: string) => path.split(/[\\/]/).pop() || path;
+
 const onFileInputChange = async (e: Event) => {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
     try {
         let str = '';
+        let zip: Record<string, Uint8Array> | null = null;
         if (file.name.endsWith('.json')) {
             str = await readFileAsString(file);
         } else if (file.name.endsWith('.zip')) {
             const buffer = await readFileAsArrayBuffer(file);
-            const zip = UZIP.parse(buffer);
+            zip = UZIP.parse(buffer);
             const jsonFile = Object.keys(zip).find(k => k.endsWith('.json'));
             if (!jsonFile) {
                 alert(t('import.notFound'));
@@ -61,7 +101,40 @@ const onFileInputChange = async (e: Event) => {
             alert(t('import.invalidType'));
             return;
         }
-        theme.value = normalizeThemeProperties(JSON.parse(str));
+        const importedTheme = normalizeThemeProperties(JSON.parse(str));
+        const background = importedTheme.backgroundImage;
+        if (zip && background?.croppedFilePath && background.srcFilePath) {
+            const croppedBytes = zip[background.croppedFilePath];
+            const sourceBytes = zip[background.srcFilePath];
+            if (croppedBytes && sourceBytes) {
+                const croppedBlob = new Blob([croppedBytes.slice().buffer], {
+                    type: imageMimeType(background.croppedFilePath)
+                });
+                const originalFile = new File(
+                    [sourceBytes.slice().buffer],
+                    basename(background.srcFilePath),
+                    { type: imageMimeType(background.srcFilePath) }
+                );
+                const croppedPreviewUrl = URL.createObjectURL(croppedBlob);
+                const sourcePreviewUrl = URL.createObjectURL(originalFile);
+                setBackgroundAssets({
+                    originalFile,
+                    croppedBlob,
+                    croppedPreviewUrl,
+                    sourcePreviewUrl
+                });
+                importedTheme.backgroundImage = {
+                    ...background,
+                    croppedFilePath: croppedPreviewUrl,
+                    srcFilePath: sourcePreviewUrl
+                };
+            } else {
+                setBackgroundAssets(null);
+            }
+        } else {
+            setBackgroundAssets(null);
+        }
+        theme.value = importedTheme;
     } catch (error) {
         console.error('Failed to import theme:', error);
         alert(t('import.invalidContent'));
@@ -72,13 +145,58 @@ const onFileInputChange = async (e: Event) => {
 
 const textEncoder = new TextEncoder();
 
+const blobToBytes = async (blob: Blob) => new Uint8Array(await blob.arrayBuffer());
+
+const dataUriToBlob = async (uri: string) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error('Failed to decode a theme image data URI.');
+    return response.blob();
+};
+
 const exportTheme = async () => {
-    const json = JSON.stringify(serializeThemeProperties(theme.value));
-    const zip = UZIP.encode({
-        [`${theme.value.name}.json`]: textEncoder.encode(json)
-    });
-    const blob = new Blob([zip], { type: 'application/zip' });
-    saveBlobAs(blob, `${theme.value.name}.zip`);
+    try {
+        const rawTheme = serializeThemeProperties(theme.value);
+        const files: Record<string, Uint8Array> = {};
+        const safeName = theme.value.name.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/[. ]+$/g, '') || 'theme';
+        const background = rawTheme.backgroundImage;
+        if (background) {
+            let originalBlob: Blob;
+            let croppedBlob: Blob;
+            let originalName: string;
+
+            if (backgroundAssets.value) {
+                originalBlob = backgroundAssets.value.originalFile;
+                croppedBlob = backgroundAssets.value.croppedBlob;
+                originalName = backgroundAssets.value.originalFile.name;
+            } else if (
+                background.srcFilePath?.startsWith('data:') &&
+                background.croppedFilePath?.startsWith('data:')
+            ) {
+                originalBlob = await dataUriToBlob(background.srcFilePath);
+                croppedBlob = await dataUriToBlob(background.croppedFilePath);
+                originalName = `source.${fileExtension(originalBlob, 'source.jpg')}`;
+            } else {
+                throw new Error('BACKGROUND_IMAGE_ASSETS_MISSING');
+            }
+
+            const sourcePath = `${safeName}-src.${fileExtension(originalBlob, originalName)}`;
+            const croppedPath = `${safeName}-cropped.${fileExtension(croppedBlob, 'cropped.jpg')}`;
+            background.srcFilePath = sourcePath;
+            background.croppedFilePath = croppedPath;
+            files[sourcePath] = await blobToBytes(originalBlob);
+            files[croppedPath] = await blobToBytes(croppedBlob);
+        }
+
+        const json = JSON.stringify(rawTheme);
+        files[`${safeName}.json`] = textEncoder.encode(json);
+        const zip = UZIP.encode(files);
+        saveBlobAs(new Blob([zip], { type: 'application/zip' }), `${safeName}.zip`);
+    } catch (error) {
+        console.error('Failed to export theme:', error);
+        alert(error instanceof Error && error.message === 'BACKGROUND_IMAGE_ASSETS_MISSING'
+            ? t('theme.exportImageMissing')
+            : t('theme.exportFailed'));
+    }
 };
 </script>
 
@@ -110,7 +228,12 @@ const exportTheme = async () => {
                 </section>
                 <PreferenceEditor v-model="preference" />
             </div>
-            <ThemeEditor v-model="theme" @import="importTheme" @export="exportTheme" />
+            <ThemeEditor
+                v-model="theme"
+                @import="importTheme"
+                @export="exportTheme"
+                @background-assets="setBackgroundAssets"
+            />
         </main>
         <input ref="file" type="file" accept=".json,.zip" hidden @change="onFileInputChange">
     </div>

@@ -10,8 +10,10 @@ import { PixelDark, PixelLight } from '../theme-preset';
 import { FormItemType } from './FormItem/FormItem';
 
 import FormItem from './FormItem/FormItem.vue';
+import ImageCropper from './ImageCropper.vue';
 import { t } from '../i18n';
 import { extractColorPalette } from '../utils/color-palette';
+import type { BackgroundImageAssets } from '../types/BackgroundImageAssets';
 
 export interface FnOpenColorPicker {
     (name: string, initialColor: string, callback: (color: string) => void, anchor: HTMLElement): void
@@ -23,7 +25,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     import: [],
-    export: []
+    export: [],
+    'background-assets': [assets: BackgroundImageAssets | null]
 }>();
 
 const model = defineModel<ThemeProperties>();
@@ -34,6 +37,7 @@ const Presets = [
 ];
 
 const loadPreset = (preset: ThemeProperties) => {
+    emit('background-assets', null);
     model.value = {
         ...preset,
         name: uuidv4()
@@ -161,6 +165,7 @@ const closeColorPicker = () => {
 onBeforeUnmount(stopTrackingColorPicker);
 
 const bgFileInput = ref<HTMLInputElement>();
+const cropFile = ref<File | null>(null);
 const defaultOverlayColor = '#000000';
 const defaultOverlayOpacity = 20;
 
@@ -177,23 +182,22 @@ const overlayOpacity = computed({
 
 const triggerBgUpload = () => bgFileInput.value?.click();
 
-const updateThemeBackgroundImage = (base64Data: string) => {
+const updateThemeBackgroundImage = (
+    croppedPreviewUrl: string,
+    sourcePreviewUrl: string,
+    cropRect: NonNullable<ThemeBackgroundImage['cropRect']>
+) => {
     const currentBackground = backgroundImage.value;
     model.value = {
         ...props.modelValue,
         backgroundImage: {
             ...currentBackground,
-            croppedFilePath: base64Data,
-            srcFilePath: base64Data,
+            croppedFilePath: croppedPreviewUrl,
+            srcFilePath: sourcePreviewUrl,
             brightness: currentBackground?.brightness ?? 50,
             overlayColor: currentBackground?.overlayColor ?? defaultOverlayColor,
             overlayOpacity: currentBackground?.overlayOpacity ?? defaultOverlayOpacity,
-            cropRect: {
-                top: 0,
-                right: 360,
-                bottom: 270,
-                left: 0
-            }
+            cropRect
         }
     };
 };
@@ -221,35 +225,40 @@ const palette = ref<string[]>([]);
 const paletteStatusKey = ref('');
 const copiedColor = ref('');
 
-const readImageFile = (file: File) => new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => typeof reader.result === 'string'
-        ? resolve(reader.result)
-        : reject(new Error('Image file did not produce a data URL.'));
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image file.'));
-    reader.readAsDataURL(file);
-});
-
-const onBgFileChange = async (e: Event) => {
+const onBgFileChange = (e: Event) => {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
-    palette.value = [];
-    paletteStatusKey.value = '';
     if (file.type && !file.type.startsWith('image/')) {
         paletteStatusKey.value = 'theme.invalidImage';
         input.value = '';
         return;
     }
-    try {
-        updateThemeBackgroundImage(await readImageFile(file));
-    } catch (error) {
-        console.error('Failed to read background image:', error);
+    cropFile.value = file;
+    input.value = '';
+};
+
+const onCrop = async (result: {
+    croppedBlob: Blob;
+    cropRect: NonNullable<ThemeBackgroundImage['cropRect']>;
+}) => {
+    const file = cropFile.value;
+    if (!file) {
         paletteStatusKey.value = 'theme.uploadFailed';
-        input.value = '';
         return;
     }
 
+    const croppedPreviewUrl = URL.createObjectURL(result.croppedBlob);
+    const sourcePreviewUrl = URL.createObjectURL(file);
+    updateThemeBackgroundImage(croppedPreviewUrl, sourcePreviewUrl, result.cropRect);
+    emit('background-assets', {
+        originalFile: file,
+        croppedBlob: result.croppedBlob,
+        croppedPreviewUrl,
+        sourcePreviewUrl
+    });
+    cropFile.value = null;
+    palette.value = [];
     paletteStatusKey.value = 'theme.paletteLoading';
     try {
         palette.value = await extractColorPalette(file);
@@ -257,9 +266,12 @@ const onBgFileChange = async (e: Event) => {
     } catch (error) {
         console.error('Failed to extract background image colors:', error);
         paletteStatusKey.value = 'theme.paletteUnavailable';
-    } finally {
-        input.value = '';
     }
+};
+
+const onCropError = (error: Error) => {
+    console.error('Failed to crop background image:', error);
+    paletteStatusKey.value = 'theme.uploadFailed';
 };
 
 const copyColor = async (color: string) => {
@@ -388,6 +400,13 @@ const copyColor = async (color: string) => {
                 <ColorPicker ref="colorPicker" theme="light" @change-color="onColorPickerChange" />
                 <input class="color-picker__close" type="button" :value="t('theme.close')" @click="closeColorPicker">
             </div>
+            <ImageCropper
+                v-if="cropFile"
+                :file="cropFile"
+                @cancel="cropFile = null"
+                @crop="onCrop"
+                @error="onCropError"
+            />
         </Teleport>
     </div>
 </template>
