@@ -15,8 +15,21 @@ const props = defineProps<{
     theme: ThemeProperties;
 }>();
 
-const keyboardStyle = computed<StyleValue>(() => ({
+const backgroundImage = computed(() => props.theme.backgroundImage ?? null);
+const backgroundImageUrl = computed(() => backgroundImage.value?.croppedFilePath || backgroundImage.value?.srcFilePath);
+
+const keyboardStyle = computed<StyleValue>(() => backgroundImageUrl.value ? {} : ({
     backgroundColor: props.preference.border ? props.theme.backgroundColor : props.theme.keyboardColor
+}));
+
+const backgroundImageStyle = computed<StyleValue>(() => ({
+    backgroundImage: `url(${JSON.stringify(backgroundImageUrl.value)})`,
+    filter: `brightness(${(backgroundImage.value?.brightness ?? 50) / 100})`
+}));
+
+const backgroundOverlayStyle = computed<StyleValue>(() => ({
+    backgroundColor: backgroundImage.value?.overlayColor ?? '#000000',
+    opacity: (backgroundImage.value?.overlayOpacity ?? 20) / 100
 }));
 
 const caps = ref(false);
@@ -69,6 +82,8 @@ const onKeyClick = (key: KeyAppearance) => {
 
 <template>
     <div class="keyboard" :style="keyboardStyle">
+        <div v-if="backgroundImageUrl" class="keyboard__background" :style="backgroundImageStyle"></div>
+        <div v-if="backgroundImageUrl" class="keyboard__overlay" :style="backgroundOverlayStyle"></div>
         <div v-for="(keyRow, rowIndex) of realLayout" :key="rowIndex" class="keyrow">
             <KeyView
                 v-for="(key, keyIndex) of keyRow"
@@ -76,20 +91,44 @@ const onKeyClick = (key: KeyAppearance) => {
                 :preference="preference"
                 :appearance="key"
                 :theme="theme"
-                @click="onKeyClick" />
+                @click="onKeyClick"
+            />
         </div>
     </div>
 </template>
 
 <style>
 .keyboard {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
     flex-grow: 1;
     display: flex;
     flex-direction: column;
     user-select: none;
 }
 
+.keyboard__background,
+.keyboard__overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.keyboard__background {
+    z-index: 0;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+}
+
+.keyboard__overlay {
+    z-index: 1;
+}
+
 .keyrow {
+    position: relative;
+    z-index: 2;
     display: flex;
     flex-basis: 25%;
     justify-content: center;

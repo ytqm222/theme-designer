@@ -2,8 +2,7 @@ export interface RawThemeProperties {
     version: string;
     name: string;
 
-    // TODO: theme background image
-    backgroundImage?: unknown;
+    backgroundImage?: ThemeBackgroundImage | null;
 
     backgroundColor: number;
     barColor: number;
@@ -36,6 +35,20 @@ export interface RawThemeProperties {
     genericActiveForegroundColor: number;
 
     isDark: boolean;
+}
+
+export interface ThemeBackgroundImage {
+    croppedFilePath?: string;
+    srcFilePath?: string;
+    brightness?: number;
+    cropRect?: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    overlayColor?: string;
+    overlayOpacity?: number;
 }
 
 export type ThemeProperties = {

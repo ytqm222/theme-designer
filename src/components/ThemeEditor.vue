@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ColorPicker } from 'vue-color-kit';
 import 'vue-color-kit/dist/vue-color-kit.css';
 
-import { ThemeProperties, ThemePropertyType, ThemePropertiesTypes } from '../types/ThemeProperties';
+import { ThemeBackgroundImage, ThemeProperties, ThemePropertyType, ThemePropertiesTypes } from '../types/ThemeProperties';
 import { PixelDark, PixelLight } from '../theme-preset';
 import { FormItemType } from './FormItem/FormItem';
 
@@ -114,8 +114,19 @@ const closeColorPicker = () => {
 
 // --- 上传和截取底图功能逻辑 ---
 const bgFileInput = ref<HTMLInputElement>();
-const bgPreviewUrl = ref('');
-const brightness = ref(50);
+const defaultOverlayColor = '#000000';
+const defaultOverlayOpacity = 20;
+
+const backgroundImage = computed(() => props.modelValue.backgroundImage ?? null);
+const brightness = computed({
+    get: () => backgroundImage.value?.brightness ?? 50,
+    set: (value: number) => updateBackgroundImage({ brightness: value })
+});
+const overlayColor = computed(() => backgroundImage.value?.overlayColor ?? defaultOverlayColor);
+const overlayOpacity = computed({
+    get: () => backgroundImage.value?.overlayOpacity ?? defaultOverlayOpacity,
+    set: (value: number) => updateBackgroundImage({ overlayOpacity: value })
+});
 
 const triggerBgUpload = () => bgFileInput.value?.click();
 
@@ -125,19 +136,22 @@ const onBgFileChange = (e: Event) => {
     const reader = new FileReader();
     reader.onload = () => {
         const base64 = reader.result as string;
-        bgPreviewUrl.value = base64;
         updateThemeBackgroundImage(base64);
     };
     reader.readAsDataURL(file);
 };
 
 const updateThemeBackgroundImage = (base64Data: string) => {
+    const currentBackground = backgroundImage.value;
     model.value = {
         ...props.modelValue,
         backgroundImage: {
+            ...currentBackground,
             croppedFilePath: base64Data,
             srcFilePath: base64Data,
-            brightness: brightness.value,
+            brightness: currentBackground?.brightness ?? 50,
+            overlayColor: currentBackground?.overlayColor ?? defaultOverlayColor,
+            overlayOpacity: currentBackground?.overlayOpacity ?? defaultOverlayOpacity,
             cropRect: {
                 top: 0,
                 right: 360,
@@ -148,17 +162,23 @@ const updateThemeBackgroundImage = (base64Data: string) => {
     };
 };
 
-const onBrightnessChange = () => {
-    const currentBg = props.modelValue.backgroundImage;
-    if (!currentBg) return;
+const updateBackgroundImage = (updates: Partial<ThemeBackgroundImage>) => {
+    const currentBackground = backgroundImage.value;
+    if (!currentBackground) return;
 
     model.value = {
         ...props.modelValue,
         backgroundImage: {
-            ...currentBg,
-            brightness: brightness.value
+            ...currentBackground,
+            ...updates
         }
     };
+};
+
+const openOverlayColorPicker = () => {
+    openColorPicker('蒙版颜色', `${overlayColor.value}ff`, color => {
+        updateBackgroundImage({ overlayColor: color.substring(0, 7) });
+    });
 };
 </script>
 
@@ -188,7 +208,17 @@ const onBrightnessChange = () => {
                         <input ref="bgFileInput" type="file" accept="image/*" style="display:none" @change="onBgFileChange">
                         <div v-if="modelValue.backgroundImage" style="margin-top: 8px;">
                             <label style="font-size: 12px; display:block; margin-bottom:4px;">Brightness (亮度: {{ brightness }}%)</label>
-                            <input type="range" min="0" max="100" v-model.number="brightness" @input="onBrightnessChange">
+                            <input v-model.number="brightness" type="range" min="0" max="100">
+                            <label style="font-size: 12px; display:block; margin: 8px 0 4px;">蒙版颜色</label>
+                            <button
+                                type="button"
+                                class="theme-editor__color-swatch"
+                                :style="{ backgroundColor: overlayColor }"
+                                aria-label="选择蒙版颜色"
+                                @click="openOverlayColorPicker"
+                            ></button>
+                            <label style="font-size: 12px; display:block; margin: 8px 0 4px;">蒙版透明度 ({{ overlayOpacity }}%)</label>
+                            <input v-model.number="overlayOpacity" type="range" min="0" max="100">
                         </div>
                     </td>
                 </tr>
@@ -228,6 +258,14 @@ const onBrightnessChange = () => {
 <style>
 .theme-editor {
     display: flex;
+}
+
+.theme-editor__color-swatch {
+    width: 32px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid #777;
+    cursor: pointer;
 }
 
 .color-picker {
