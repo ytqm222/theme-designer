@@ -56,8 +56,13 @@ const EntryType: Record<ThemePropertyType, FormItemType | null> = {
 const entries = computed(() => {
     const result = [];
     for (const [name, value] of Object.entries(props.modelValue)) {
-        const type: FormItemType | null = EntryType[ThemePropertiesTypes[name as keyof typeof ThemePropertiesTypes]];
+        const propType = ThemePropertiesTypes[name as keyof typeof ThemePropertiesTypes];
+
+        if (propType === undefined) continue;
+
+        const type = EntryType[propType];
         if (type === null) continue;
+
         result.push({ name, type, value });
     }
     return result;
