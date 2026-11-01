@@ -87,8 +87,10 @@ const exportTheme = async () => {
 </template>
 
 <style>
-body {
+html, body {
     margin: 0; /* Content fills 100% width on phone. */
+    background-color: #ffffff;
+    color: #111111;
 }
 
 .kbd {
