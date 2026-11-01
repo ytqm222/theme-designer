@@ -144,16 +144,16 @@ const updateThemeBackgroundImage = (base64Data: string) => {
 };
 
 const onBrightnessChange = () => {
-    if (props.modelValue.backgroundImage) {
-        const currentBg = props.modelValue.backgroundImage as any;
-        model.value = {
-            ...props.modelValue,
-            backgroundImage: {
-                ...currentBg,
-                brightness: brightness.value
-            }
-        };
-    }
+    const currentBg = props.modelValue.backgroundImage;
+    if (!currentBg) return;
+
+    model.value = {
+        ...props.modelValue,
+        backgroundImage: {
+            ...currentBg,
+            brightness: brightness.value
+        }
+    };
 };
 </script>
 
