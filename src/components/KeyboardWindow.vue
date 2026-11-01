@@ -31,6 +31,8 @@ const backgroundOverlayStyle = computed<StyleValue>(() => ({
     backgroundColor: backgroundImage.value?.overlayColor ?? '#000000',
     opacity: (backgroundImage.value?.overlayOpacity ?? 20) / 100
 }));
+const hasBackgroundOverlay = computed(() => backgroundImage.value?.overlayColor !== undefined
+    || backgroundImage.value?.overlayOpacity !== undefined);
 
 const caps = ref(false);
 const transformAlphabet = (c: string) => caps.value ? c.toUpperCase() : c.toLowerCase();
@@ -83,7 +85,7 @@ const onKeyClick = (key: KeyAppearance) => {
 <template>
     <div class="keyboard" :style="keyboardStyle">
         <div v-if="backgroundImageUrl" class="keyboard__background" :style="backgroundImageStyle"></div>
-        <div v-if="backgroundImageUrl" class="keyboard__overlay" :style="backgroundOverlayStyle"></div>
+        <div v-if="backgroundImageUrl && hasBackgroundOverlay" class="keyboard__overlay" :style="backgroundOverlayStyle"></div>
         <div v-for="(keyRow, rowIndex) of realLayout" :key="rowIndex" class="keyrow">
             <KeyView
                 v-for="(key, keyIndex) of keyRow"

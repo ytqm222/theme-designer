@@ -153,6 +153,40 @@ const dataUriToBlob = async (uri: string) => {
     return response.blob();
 };
 
+const bakeBackgroundOverlay = async (blob: Blob, color: string, opacity: number) => {
+    if (!/^#[\da-f]{6}$/i.test(color)) throw new Error('Invalid background overlay color.');
+    if (!Number.isFinite(opacity)) throw new Error('Invalid background overlay opacity.');
+
+    const image = await createImageBitmap(blob);
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Failed to create a canvas context for the background image.');
+
+        context.drawImage(image, 0, 0);
+        context.globalAlpha = Math.min(100, Math.max(0, opacity)) / 100;
+        context.fillStyle = color;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+
+        return await new Promise<Blob>((resolve, reject) => {
+            try {
+                canvas.toBlob(
+                    result => result
+                        ? resolve(result)
+                        : reject(new Error('Failed to encode the background image with its overlay.')),
+                    blob.type
+                );
+            } catch (error) {
+                reject(error instanceof Error ? error : new Error('Failed to encode the background image with its overlay.'));
+            }
+        });
+    } finally {
+        image.close();
+    }
+};
+
 const exportTheme = async () => {
     try {
         const rawTheme = serializeThemeProperties(theme.value);
@@ -180,14 +214,32 @@ const exportTheme = async () => {
             }
 
             const sourcePath = `${safeName}-src.${fileExtension(originalBlob, originalName)}`;
-            const croppedPath = `${safeName}-cropped.${fileExtension(croppedBlob, 'cropped.jpg')}`;
             background.srcFilePath = sourcePath;
-            background.croppedFilePath = croppedPath;
             files[sourcePath] = await blobToBytes(originalBlob);
+            if (background.overlayColor !== undefined || background.overlayOpacity !== undefined) {
+                croppedBlob = await bakeBackgroundOverlay(
+                    croppedBlob,
+                    background.overlayColor ?? '#000000',
+                    background.overlayOpacity ?? 20
+                );
+            }
+            const croppedPath = `${safeName}-cropped.${fileExtension(croppedBlob, 'cropped.jpg')}`;
+            background.croppedFilePath = croppedPath;
             files[croppedPath] = await blobToBytes(croppedBlob);
         }
 
-        const json = JSON.stringify(rawTheme);
+        const exportedTheme = {
+            ...rawTheme,
+            backgroundImage: background
+                ? {
+                    croppedFilePath: background.croppedFilePath,
+                    srcFilePath: background.srcFilePath,
+                    brightness: background.brightness ?? 50,
+                    cropRect: background.cropRect
+                }
+                : null
+        };
+        const json = JSON.stringify(exportedTheme);
         files[`${safeName}.json`] = textEncoder.encode(json);
         const zip = UZIP.encode(files);
         saveBlobAs(new Blob([zip], { type: 'application/zip' }), `${safeName}.zip`);
