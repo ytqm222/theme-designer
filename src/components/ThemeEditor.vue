@@ -87,12 +87,14 @@ const colorPickerPanel = ref<HTMLDivElement>();
 const colorPickerPosition = reactive({ top: '0px', left: '0px' });
 let colorPickerAnchor: HTMLElement | null = null;
 
-const onColorPickerChange = (color: { r: number, g: number, b: number, a: number }) => {
-    const r = color.r.toString(16).padStart(2, '0');
-    const g = color.g.toString(16).padStart(2, '0');
-    const b = color.b.toString(16).padStart(2, '0');
-    const a = Math.round(color.a * 255).toString(16).padStart(2, '0');
-    picker.onChange(`#${r}${g}${b}${a}`);
+const onColorPickerChange = (color: {
+    rgba: { r: number, g: number, b: number, a: number }
+}) => {
+    const { r, g, b, a } = color.rgba;
+    const hex = [r, g, b, Math.round(a * 255)]
+        .map(channel => channel.toString(16).padStart(2, '0'))
+        .join('');
+    picker.onChange(`#${hex}`);
 };
 
 function hexa2rgba(hexa: string): string {
