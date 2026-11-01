@@ -16,6 +16,9 @@ import PreferenceEditor from './components/PreferenceEditor.vue';
 import ThemeEditor from './components/ThemeEditor.vue';
 
 import { readFileAsArrayBuffer, readFileAsString, saveBlobAs } from './utils/file-operations';
+import { language, setLanguage, t, type Language } from './i18n';
+
+setLanguage(language.value);
 
 const preference = ref<ThemePreference>({
     border: false,
@@ -29,34 +32,41 @@ const theme = ref<ThemeProperties>({ ...PixelDark, name: uuidv4() });
 
 const file = ref<HTMLInputElement>();
 
+const onLanguageChange = (e: Event) => {
+    setLanguage((e.target as HTMLSelectElement).value as Language);
+};
+
 const importTheme = () => file.value?.click();
 
 const textDecoder = new TextDecoder();
 
 const onFileInputChange = async (e: Event) => {
-    const file = (e.target as HTMLInputElement)?.files?.[0];
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
     if (!file) return;
-    let str = '';
-    if (file.name.endsWith('.json')) {
-        str = await readFileAsString(file);
-    } else if (file.name.endsWith('.zip')) {
-        const buffer = await readFileAsArrayBuffer(file);
-        const zip = UZIP.parse(buffer);
-        const jsonFile = Object.keys(zip).find(k => k.endsWith('.json'));
-        if (!jsonFile) {
-            alert('Cannot find theme file under root directory.');
+    try {
+        let str = '';
+        if (file.name.endsWith('.json')) {
+            str = await readFileAsString(file);
+        } else if (file.name.endsWith('.zip')) {
+            const buffer = await readFileAsArrayBuffer(file);
+            const zip = UZIP.parse(buffer);
+            const jsonFile = Object.keys(zip).find(k => k.endsWith('.json'));
+            if (!jsonFile) {
+                alert(t('import.notFound'));
+                return;
+            }
+            str = textDecoder.decode(zip[jsonFile]);
+        } else {
+            alert(t('import.invalidType'));
             return;
         }
-        str = textDecoder.decode(zip[jsonFile]);
-    } else {
-        alert('Invalid file type! Must be either ".json" or ".zip".');
-        return;
-    }
-    try {
-        const json = JSON.parse(str);
-        theme.value = normalizeThemeProperties(json);
-    } catch {
-        alert('Malformated file content. Must be JSON string.');
+        theme.value = normalizeThemeProperties(JSON.parse(str));
+    } catch (error) {
+        console.error('Failed to import theme:', error);
+        alert(t('import.invalidContent'));
+    } finally {
+        input.value = '';
     }
 };
 
@@ -73,38 +83,35 @@ const exportTheme = async () => {
 </script>
 
 <template>
-    <div class="kbd">
-        <div class="input-view">
-            <KawaiiBar :preference="preference" :theme="theme" />
-            <KeyboardWindow :preference="preference" :layout="TextKeyboard" :theme="theme" />
-        </div>
-        <PreferenceEditor v-model="preference" />
+    <div class="app-shell">
+        <header class="app-header">
+            <div>
+                <h1>{{ t('app.title') }}</h1>
+                <p>{{ t('app.subtitle') }}</p>
+            </div>
+            <label class="language-picker">
+                <span>{{ t('app.language') }}</span>
+                <select :value="language" @change="onLanguageChange">
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                </select>
+            </label>
+        </header>
+        <main class="workspace-grid">
+            <div class="preview-column">
+                <section class="preview-card">
+                    <h2>{{ t('app.preview') }}</h2>
+                    <div class="preview-stage">
+                        <div class="input-view">
+                            <KawaiiBar :preference="preference" :theme="theme" />
+                            <KeyboardWindow :preference="preference" :layout="TextKeyboard" :theme="theme" />
+                        </div>
+                    </div>
+                </section>
+                <PreferenceEditor v-model="preference" />
+            </div>
+            <ThemeEditor v-model="theme" @import="importTheme" @export="exportTheme" />
+        </main>
+        <input ref="file" type="file" accept=".json,.zip" hidden @change="onFileInputChange">
     </div>
-    <div class="form">
-        <ThemeEditor v-model="theme" @import="importTheme" @export="exportTheme" />
-    </div>
-    <input ref="file" type="file" style="display:none" @change="onFileInputChange">
 </template>
-
-<style>
-html, body {
-    margin: 0; /* Content fills 100% width on phone. */
-    background-color: #ffffff;
-    color: #111111;
-}
-
-.kbd {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px 50px;
-    margin-bottom: 20px;
-}
-
-.input-view {
-    height: 270px;
-    width: 360px;
-    display: flex;
-    flex-direction: column;
-    font-family: sans-serif; /* Android default */
-}
-</style>

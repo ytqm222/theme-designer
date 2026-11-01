@@ -9,6 +9,7 @@ import EnumForm from './FormItemEnum.vue';
 import NumberForm from './FormItemNumber.vue';
 import TextForm from './FormItemText.vue';
 import UUIDForm from './FormItemUUID.vue';
+import { t } from '../../i18n';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FormValueType = any;
@@ -43,7 +44,7 @@ switch (props.type) {
 <template>
     <tr>
         <th>
-            <label :for="name" v-text="name"></label>
+            <label :for="name">{{ t(`field.${name}`) }}</label>
         </th>
         <td>
             <component :is="formType" :name="name" :value="value" @update="onValueUpdate" />

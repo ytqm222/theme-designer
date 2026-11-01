@@ -10,6 +10,8 @@ import { PixelDark, PixelLight } from '../theme-preset';
 import { FormItemType } from './FormItem/FormItem';
 
 import FormItem from './FormItem/FormItem.vue';
+import { t } from '../i18n';
+import { extractColorPalette } from '../utils/color-palette';
 
 export interface FnOpenColorPicker {
     (name: string, initialColor: string, callback: (color: string) => void): void
@@ -42,7 +44,7 @@ const onSelectPreset = (e: Event) => {
     const selected = (e.target as HTMLSelectElement).value;
     const preset = Presets.find(p => p.name === selected);
     if (!preset) return;
-    if (!confirm(`Override editing theme with preset "${selected}"?`)) return;
+    if (!confirm(t('theme.confirmPreset', { name: t(`preset.${selected}`) }))) return;
     loadPreset(preset);
 };
 
@@ -112,7 +114,6 @@ const closeColorPicker = () => {
     picker.onChange = () => { };
 };
 
-// --- 上传和截取底图功能逻辑 ---
 const bgFileInput = ref<HTMLInputElement>();
 const defaultOverlayColor = '#000000';
 const defaultOverlayOpacity = 20;
@@ -129,17 +130,6 @@ const overlayOpacity = computed({
 });
 
 const triggerBgUpload = () => bgFileInput.value?.click();
-
-const onBgFileChange = (e: Event) => {
-    const file = (e.target as HTMLInputElement)?.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-        const base64 = reader.result as string;
-        updateThemeBackgroundImage(base64);
-    };
-    reader.readAsDataURL(file);
-};
 
 const updateThemeBackgroundImage = (base64Data: string) => {
     const currentBackground = backgroundImage.value;
@@ -176,55 +166,148 @@ const updateBackgroundImage = (updates: Partial<ThemeBackgroundImage>) => {
 };
 
 const openOverlayColorPicker = () => {
-    openColorPicker('蒙版颜色', `${overlayColor.value}ff`, color => {
+    openColorPicker(t('theme.overlayColor'), `${overlayColor.value}ff`, color => {
         updateBackgroundImage({ overlayColor: color.substring(0, 7) });
     });
+};
+
+const palette = ref<string[]>([]);
+const paletteStatusKey = ref('');
+const copiedColor = ref('');
+
+const readImageFile = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === 'string'
+        ? resolve(reader.result)
+        : reject(new Error('Image file did not produce a data URL.'));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image file.'));
+    reader.readAsDataURL(file);
+});
+
+const onBgFileChange = async (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    palette.value = [];
+    paletteStatusKey.value = '';
+    if (file.type && !file.type.startsWith('image/')) {
+        paletteStatusKey.value = 'theme.invalidImage';
+        input.value = '';
+        return;
+    }
+    try {
+        updateThemeBackgroundImage(await readImageFile(file));
+    } catch (error) {
+        console.error('Failed to read background image:', error);
+        paletteStatusKey.value = 'theme.uploadFailed';
+        input.value = '';
+        return;
+    }
+
+    paletteStatusKey.value = 'theme.paletteLoading';
+    try {
+        palette.value = await extractColorPalette(file);
+        paletteStatusKey.value = palette.value.length ? '' : 'theme.paletteUnavailable';
+    } catch (error) {
+        console.error('Failed to extract background image colors:', error);
+        paletteStatusKey.value = 'theme.paletteUnavailable';
+    } finally {
+        input.value = '';
+    }
+};
+
+const copyColor = async (color: string) => {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(color);
+        } else {
+            const input = document.createElement('textarea');
+            input.value = color;
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            input.remove();
+            if (!copied) throw new Error('Browser refused clipboard access.');
+        }
+        copiedColor.value = color;
+        paletteStatusKey.value = 'theme.paletteCopied';
+    } catch (error) {
+        console.error('Failed to copy image color:', error);
+        paletteStatusKey.value = 'theme.copyFailed';
+    }
 };
 </script>
 
 <template>
     <div class="theme-editor">
+        <h2>{{ t('theme.title') }}</h2>
         <table>
             <tbody>
                 <tr>
-                    <th>Load Preset</th>
+                    <th>{{ t('theme.loadPreset') }}</th>
                     <td>
                         <select :value="''" @input="onSelectPreset">
                             <option v-for="p of Presets" :key="p.name" :value="p.name">
-                                {{ p.name }}
+                                {{ t(`preset.${p.name}`) }}
                             </option>
                         </select>
                     </td>
                 </tr>
                 <tr>
-                    <th colspan="2" style="padding-top:15px; color:#1a73e8;">
-                        Background Image (底图配置)
+                    <th colspan="2" class="theme-editor__section-title">
+                        {{ t('theme.background') }}
                     </th>
                 </tr>
                 <tr>
-                    <th>Skin Background</th>
+                    <th>{{ t('theme.background') }}</th>
                     <td>
-                        <input type="button" value="Upload Background Image" @click="triggerBgUpload">
-                        <input ref="bgFileInput" type="file" accept="image/*" style="display:none" @change="onBgFileChange">
-                        <div v-if="modelValue.backgroundImage" style="margin-top: 8px;">
-                            <label style="font-size: 12px; display:block; margin-bottom:4px;">Brightness (亮度: {{ brightness }}%)</label>
-                            <input v-model.number="brightness" type="range" min="0" max="100">
-                            <label style="font-size: 12px; display:block; margin: 8px 0 4px;">蒙版颜色</label>
+                        <button type="button" class="button button--secondary" @click="triggerBgUpload">
+                            {{ modelValue.backgroundImage ? t('theme.backgroundReplace') : t('theme.backgroundUpload') }}
+                        </button>
+                        <input ref="bgFileInput" type="file" accept="image/*" hidden @change="onBgFileChange">
+                        <div v-if="modelValue.backgroundImage" class="background-controls">
+                            <label class="control-label">{{ t('theme.brightness') }} ({{ brightness }}%)</label>
+                            <input v-model.number="brightness" class="range-input" type="range" min="0" max="100">
+                            <label class="control-label">{{ t('theme.overlayColor') }}</label>
                             <button
                                 type="button"
                                 class="theme-editor__color-swatch"
                                 :style="{ backgroundColor: overlayColor }"
-                                aria-label="选择蒙版颜色"
+                                :aria-label="t('theme.chooseOverlayColor')"
                                 @click="openOverlayColorPicker"
                             ></button>
-                            <label style="font-size: 12px; display:block; margin: 8px 0 4px;">蒙版透明度 ({{ overlayOpacity }}%)</label>
-                            <input v-model.number="overlayOpacity" type="range" min="0" max="100">
+                            <label class="control-label">{{ t('theme.overlayOpacity') }} ({{ overlayOpacity }}%)</label>
+                            <input v-model.number="overlayOpacity" class="range-input" type="range" min="0" max="100">
+                            <div v-if="palette.length" class="color-palette">
+                                <div class="color-palette__heading">
+                                    <strong>{{ t('theme.palette') }}</strong>
+                                    <span>{{ t('theme.paletteHint') }}</span>
+                                </div>
+                                <div class="color-palette__swatches">
+                                    <button
+                                        v-for="color of palette"
+                                        :key="color"
+                                        type="button"
+                                        class="color-palette__color"
+                                        :aria-label="`${color} — ${t('theme.paletteHint')}`"
+                                        @click="copyColor(color)"
+                                    >
+                                        <span class="color-palette__sample" :style="{ backgroundColor: color }"></span>
+                                        <code>{{ color }}</code>
+                                    </button>
+                                </div>
+                            </div>
+                            <p v-if="paletteStatusKey" class="theme-editor__status" role="status">
+                                {{ t(paletteStatusKey, { color: copiedColor }) }}
+                            </p>
                         </div>
                     </td>
                 </tr>
                 <tr>
-                    <th colspan="2">
-                        Theme Colors
+                    <th colspan="2" class="theme-editor__section-title">
+                        {{ t('theme.colors') }}
                     </th>
                 </tr>
                 <template v-for="item of entries" :key="item.name">
@@ -233,9 +316,10 @@ const openOverlayColorPicker = () => {
                 <tr>
                     <th></th>
                     <td>
-                        <input type="button" value="Import" @click="emit('import')">
-                        <span>&nbsp;</span>
-                        <input type="button" value="Export" @click="emit('export')">
+                        <div class="theme-editor__actions">
+                            <button type="button" class="button button--secondary" @click="emit('import')">{{ t('theme.import') }}</button>
+                            <button type="button" class="button button--primary" @click="emit('export')">{{ t('theme.export') }}</button>
+                        </div>
                     </td>
                 </tr>
             </tbody>
@@ -244,33 +328,36 @@ const openOverlayColorPicker = () => {
             <table class="color-picker__title">
                 <tbody>
                     <tr>
-                        <th>Color</th>
+                        <th>{{ t('theme.color') }}</th>
                         <td v-text="picker.name"></td>
                     </tr>
                 </tbody>
             </table>
             <ColorPicker ref="colorPicker" theme="light" @change-color="onColorPickerChange" />
-            <input class="color-picker__close" type="button" value="Close" @click="closeColorPicker">
+            <input class="color-picker__close" type="button" :value="t('theme.close')" @click="closeColorPicker">
         </div>
     </div>
 </template>
 
 <style>
 .theme-editor {
-    display: flex;
+    min-width: 0;
 }
 
 .theme-editor__color-swatch {
-    width: 32px;
-    height: 24px;
+    width: 44px;
+    height: 36px;
     padding: 0;
     border: 1px solid #777;
+    border-radius: 6px;
     cursor: pointer;
 }
 
 .color-picker {
     background-color: #f7f8f9;
-    margin-left: 16px;
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 10px;
 }
 
 .color-picker__title {
@@ -278,10 +365,95 @@ const openOverlayColorPicker = () => {
 }
 
 .color-picker__close {
-    margin: 10px;
+    margin-top: 10px;
 }
 
 .hu-color-picker {
     box-shadow: none;
+}
+
+.theme-editor__section-title {
+    padding-top: 20px;
+    color: #5362a5;
+}
+
+.background-controls {
+    margin-top: 16px;
+}
+
+.control-label {
+    display: block;
+    margin: 14px 0 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.range-input {
+    width: 100%;
+    accent-color: #5865c5;
+}
+
+.color-palette {
+    margin-top: 20px;
+}
+
+.color-palette__heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    margin-bottom: 10px;
+}
+
+.color-palette__heading span {
+    color: #6b7280;
+    font-size: 0.82rem;
+    font-weight: 400;
+}
+
+.color-palette__swatches {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    gap: 8px;
+}
+
+.color-palette__color {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid #e1e4ec;
+    border-radius: 8px;
+    background: #fff;
+    color: #273047;
+    cursor: pointer;
+    text-align: left;
+}
+
+.color-palette__color:hover {
+    border-color: #5865c5;
+}
+
+.color-palette__sample {
+    height: 28px;
+    border-radius: 4px;
+}
+
+.color-palette__color code {
+    font-size: 0.75rem;
+}
+
+.theme-editor__status {
+    min-height: 1.25em;
+    margin: 10px 0 0;
+    color: #5362a5;
+    font-size: 0.85rem;
+}
+
+.theme-editor__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 </style>

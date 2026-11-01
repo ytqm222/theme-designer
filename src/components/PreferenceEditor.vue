@@ -5,6 +5,7 @@ import { ThemePreference, ThemePreferenceType, ThemePreferenceTypes } from '../t
 import { FormItemType } from './FormItem/FormItem';
 
 import FormItem from './FormItem/FormItem.vue';
+import { t } from '../i18n';
 
 const props = defineProps<{
     modelValue: ThemePreference
@@ -42,7 +43,7 @@ const onPropUpdate = (k: string, v: boolean | string) => {
         <table>
             <tbody>
                 <tr>
-                    <th colspan="2">Preference</th>
+                    <th colspan="2">{{ t('preference.title') }}</th>
                 </tr>
                 <template v-for="item of entries" :key="item.name">
                     <FormItem v-bind="item" @update="onPropUpdate" />

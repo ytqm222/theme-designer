@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid';
+import { t } from '../../i18n';
 
 defineProps<{
     name: string;
@@ -25,7 +26,7 @@ const onInput = (e: Event) => {
 
 <template>
     <input :id="name" type="text" :value="value" @click="onClick" @input="onInput">
-    <button @click="newUUID">New UUID</button>
+    <button type="button" class="button button--small button--secondary" @click="newUUID">{{ t('uuid.new') }}</button>
 </template>
 
 <style scoped>
