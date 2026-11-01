@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, provide } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, provide } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 
 import { ColorPicker } from 'vue-color-kit';
@@ -14,7 +14,7 @@ import { t } from '../i18n';
 import { extractColorPalette } from '../utils/color-palette';
 
 export interface FnOpenColorPicker {
-    (name: string, initialColor: string, callback: (color: string) => void): void
+    (name: string, initialColor: string, callback: (color: string) => void, anchor: HTMLElement): void
 }
 
 const props = defineProps<{
@@ -83,6 +83,9 @@ const picker = reactive({
     onChange: (_color: string) => { },
 });
 const colorPicker = ref<InstanceType<typeof ColorPicker>>();
+const colorPickerPanel = ref<HTMLDivElement>();
+const colorPickerPosition = reactive({ top: '0px', left: '0px' });
+let colorPickerAnchor: HTMLElement | null = null;
 
 const onColorPickerChange = (color: { r: number, g: number, b: number, a: number }) => {
     const r = color.r.toString(16).padStart(2, '0');
@@ -100,11 +103,48 @@ function hexa2rgba(hexa: string): string {
     return `${r}, ${g}, ${b}, ${a.toFixed(3)}`;
 }
 
-const openColorPicker: FnOpenColorPicker = (name, initialColor, callback) => {
+const updateColorPickerPosition = () => {
+    if (!picker.open || !colorPickerAnchor?.isConnected || !colorPickerPanel.value) return;
+
+    const anchorRect = colorPickerAnchor.getBoundingClientRect();
+    const panelRect = colorPickerPanel.value.getBoundingClientRect();
+    const gap = 12;
+    const viewportPadding = 12;
+    const right = anchorRect.right + gap;
+    const leftOfAnchor = anchorRect.left - panelRect.width - gap;
+    const left = right + panelRect.width <= window.innerWidth - viewportPadding
+        ? right
+        : leftOfAnchor >= viewportPadding
+            ? leftOfAnchor
+            : Math.max(viewportPadding, Math.min(right, window.innerWidth - panelRect.width - viewportPadding));
+    const top = Math.max(
+        viewportPadding,
+        Math.min(
+            anchorRect.top + (anchorRect.height - panelRect.height) / 2,
+            window.innerHeight - panelRect.height - viewportPadding
+        )
+    );
+
+    colorPickerPosition.left = `${left}px`;
+    colorPickerPosition.top = `${top}px`;
+};
+
+const stopTrackingColorPicker = () => {
+    window.removeEventListener('resize', updateColorPickerPosition);
+    window.removeEventListener('scroll', updateColorPickerPosition, true);
+};
+
+const openColorPicker: FnOpenColorPicker = async (name, initialColor, callback, anchor) => {
     colorPicker.value?.inputRgba(hexa2rgba(initialColor));
     picker.name = name;
     picker.open = true;
     picker.onChange = callback;
+    colorPickerAnchor = anchor;
+    stopTrackingColorPicker();
+    window.addEventListener('resize', updateColorPickerPosition);
+    window.addEventListener('scroll', updateColorPickerPosition, true);
+    await nextTick();
+    updateColorPickerPosition();
 };
 
 provide<FnOpenColorPicker>('openColorPicker', openColorPicker);
@@ -112,7 +152,11 @@ provide<FnOpenColorPicker>('openColorPicker', openColorPicker);
 const closeColorPicker = () => {
     picker.open = false;
     picker.onChange = () => { };
+    colorPickerAnchor = null;
+    stopTrackingColorPicker();
 };
+
+onBeforeUnmount(stopTrackingColorPicker);
 
 const bgFileInput = ref<HTMLInputElement>();
 const defaultOverlayColor = '#000000';
@@ -165,10 +209,10 @@ const updateBackgroundImage = (updates: Partial<ThemeBackgroundImage>) => {
     };
 };
 
-const openOverlayColorPicker = () => {
+const openOverlayColorPicker = (e: MouseEvent) => {
     openColorPicker(t('theme.overlayColor'), `${overlayColor.value}ff`, color => {
         updateBackgroundImage({ overlayColor: color.substring(0, 7) });
-    });
+    }, e.currentTarget as HTMLElement);
 };
 
 const palette = ref<string[]>([]);
@@ -324,18 +368,25 @@ const copyColor = async (color: string) => {
                 </tr>
             </tbody>
         </table>
-        <div v-show="picker.open" class="color-picker">
-            <table class="color-picker__title">
-                <tbody>
-                    <tr>
-                        <th>{{ t('theme.color') }}</th>
-                        <td v-text="picker.name"></td>
-                    </tr>
-                </tbody>
-            </table>
-            <ColorPicker ref="colorPicker" theme="light" @change-color="onColorPickerChange" />
-            <input class="color-picker__close" type="button" :value="t('theme.close')" @click="closeColorPicker">
-        </div>
+        <Teleport to="body">
+            <div
+                v-show="picker.open"
+                ref="colorPickerPanel"
+                class="color-picker"
+                :style="colorPickerPosition"
+            >
+                <table class="color-picker__title">
+                    <tbody>
+                        <tr>
+                            <th>{{ t('theme.color') }}</th>
+                            <td v-text="picker.name"></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <ColorPicker ref="colorPicker" theme="light" @change-color="onColorPickerChange" />
+                <input class="color-picker__close" type="button" :value="t('theme.close')" @click="closeColorPicker">
+            </div>
+        </Teleport>
     </div>
 </template>
 
@@ -354,10 +405,17 @@ const copyColor = async (color: string) => {
 }
 
 .color-picker {
-    background-color: #f7f8f9;
-    margin-top: 16px;
+    position: fixed;
+    z-index: 1000;
+    width: 340px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    overflow: auto;
     padding: 12px;
+    border: 1px solid #e1e4ec;
     border-radius: 10px;
+    background-color: #f7f8f9;
+    box-shadow: 0 12px 36px rgb(22 29 49 / 24%);
 }
 
 .color-picker__title {
